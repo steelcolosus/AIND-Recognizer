@@ -77,7 +77,30 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+
+        optimal_hmm_model = None
+        num_of_features = self.X.shape[1]
+        best_BIC = float("inf")
+        logN = np.log(len((self.lengths)))
+
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(num_states)
+                log_likelihood = hmm_model.score(self.X, self.lengths)
+                # number of parameters
+                p = num_states + (num_states * (num_states - 1)) + (num_states * num_of_features * 2)
+
+                # Calculate Bayesian Information Criteria (BIC)
+                BIC_score = -2 * log_likelihood + p * logN
+            except:
+                continue
+
+            # Select best model
+            if best_BIC > BIC_score:
+                optimal_hmm_model = hmm_model
+                best_BIC = BIC_score
+
+        return optimal_hmm_model
 
 
 class SelectorDIC(ModelSelector):
@@ -94,7 +117,38 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        n_word = len((self.words).keys())
+        optimal_hmm_model = None
+        optimal_DIC = float('-inf')
+
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(num_states)
+                log_likelihood = hmm_model.score(self.X, self.lengths)
+            except:
+                log_likelihood = float("-inf")
+            
+            log_sum = 0
+
+            for word in self.hwords.keys():
+                ix_word, word_lengths = self.hwords[word]
+
+            try:
+                log_sum += hmm_model.score(ix_word, word_lengths)
+
+            except:
+                log_sum += 0
+
+
+            # DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
+            DIC_Score = log_likelihood - (1 / (n_word - 1)) * (log_sum - (0 if log_likelihood == float("-inf") else log_likelihood))
+
+            # Select best model
+            if DIC_Score > optimal_DIC:
+                optimal_DIC = DIC_Score
+                optimal_hmm_model = hmm_model
+
+        return optimal_hmm_model
 
 
 class SelectorCV(ModelSelector):
@@ -106,4 +160,45 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        optimal_cv_score = float('-inf')
+        optimal_hmm_model = None
+
+        # Check for appropriate data for KFold
+        if len(self.sequences) < 2:
+            return None
+
+        kf = KFold(n_splits=2)
+
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+            log_sum = 0
+            cnt = 0
+
+            # Iterate sequences
+            for cv_train_ix, cv_test_ix in kf.split(self.sequences):
+
+                # Train and test using KFold
+                X_train, lengths_train = combine_sequences(cv_train_ix, self.sequences)
+                X_test, lengths_test = combine_sequences(cv_test_ix, self.sequences)
+
+                try:
+                     # Train GaussianHMM model
+                    hmm_model = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
+                                            random_state=self.random_state, verbose=False).fit(X_train, lengths_train)
+
+                    log_likelihood = hmm_model.score(X_test, lengths_test)
+                    cnt += 1
+
+                except:
+                    log_likelihood = 0
+
+                log_sum += log_likelihood
+
+            # Calculate Score
+            cv_score = log_sum / (1 if cnt == 0 else cnt)
+
+            # Select optimal model
+            if cv_score > optimal_cv_score:
+                optimal_cv_score = cv_score
+                optimal_hmm_model = hmm_model
+
+        return optimal_hmm_model
